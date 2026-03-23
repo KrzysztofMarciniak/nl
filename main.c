@@ -358,12 +358,6 @@ void print(S *s) {
 }
 
 int main(int argc, char **argv) {
-    buf = malloc(buf_size);
-    if (!buf) {
-        fprintf(stderr, "Failed to allocate buffer\n");
-        return 1;
-    }
-
     env_set("+", m("+"));
     env_set("-", m("-"));
     env_set("*", m("*"));
@@ -383,17 +377,65 @@ int main(int argc, char **argv) {
         for (int i = 1; i < argc; i++) {
             FILE *f = fopen(argv[i], "r");
             if (!f) continue;
-            while (fgets(buf, buf_size, f)) {
-                if (buf[0] == ';') continue;
-                p = buf;
+
+            // Get file size
+            fseek(f, 0, SEEK_END);
+            long fsize = ftell(f);
+            fseek(f, 0, SEEK_SET);
+
+            // Allocate buffer for entire file
+            buf = malloc(fsize + 1);
+            if (!buf) {
+                fprintf(stderr, "Failed to allocate buffer for %s\n", argv[i]);
+                fclose(f);
+                continue;
+            }
+            buf_size = fsize + 1;
+
+            // Read entire file
+            size_t read = fread(buf, 1, fsize, f);
+            buf[read] = '\0';
+
+            // Process line by line
+            p = buf;
+            while (*p) {
+                // Skip whitespace
+                while (*p && isspace(*p) && *p != '\n') p++;
+
+                // Skip comments
+                if (*p == ';') {
+                    while (*p && *p != '\n') p++;
+                    if (*p == '\n') p++;
+                    continue;
+                }
+
+                // Skip empty lines
+                if (*p == '\n') {
+                    p++;
+                    continue;
+                }
+
+                if (!*p) break;
+
+                // Parse and eval
                 S *e = read_atom();
                 S *res = eval(e);
                 print(res);
                 printf("\n");
             }
+
+            free(buf);
             fclose(f);
         }
     } else {
+        // For stdin, use reasonable default
+        buf_size = 4096;
+        buf = malloc(buf_size);
+        if (!buf) {
+            fprintf(stderr, "Failed to allocate buffer\n");
+            return 1;
+        }
+
         if (isatty(0)) printf("nil-lisp\n");
         while (fgets(buf, buf_size, stdin)) {
             p = buf;
@@ -402,8 +444,9 @@ int main(int argc, char **argv) {
             print(res);
             printf("\n");
         }
+
+        free(buf);
     }
 
-    free(buf);
     return 0;
 }
