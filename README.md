@@ -2,6 +2,7 @@
 ## TODO:
 * [x] malloc files
 * [x] create a small syscall implementation as an addon
+* [ ] add (arg n)
 * [ ] optimize further(?)
 n(il)-lisp: small lisp interpreter (C99).
 ### build:
