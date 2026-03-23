@@ -3,25 +3,61 @@
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <dlfcn.h>
+#include <stdint.h>
 
 typedef struct S { int t; double n; char *s; struct S **l; int len; } S;
+typedef long (*ffi_fn)(long, long, long, long, long, long);  // Proper prototype
+
 #define NUM 1
 #define SYM 2
 #define LST 3
 #define T_TRUE 4
 #define T_FALSE 5
 #define T_NIL 6
+#define FFI_FN 7
 
-char buf[4096], *p, *env_keys[256];
-S *env_vals[256], nil_cell = {T_NIL};
+char *buf = NULL;
+size_t buf_size = 4096;
+char *p, *env_keys[256];
+S *env_vals[256], nil_cell = {.t = T_NIL, .n = 0.0, .s = NULL, .l = NULL, .len = 0};
 int env_len = 0;
 
+// FFI function cache
+typedef struct {
+    char *lib_name;
+    char *fn_name;
+    void *lib_handle;
+    ffi_fn fn;
+} ffi_cache_entry;
+
+#define MAX_FFI_CACHE 64
+ffi_cache_entry ffi_cache[MAX_FFI_CACHE];
+int ffi_cache_len = 0;
+
 S *n(double x) { S *s = malloc(sizeof(S)); s->t = NUM; s->n = x; return s; }
-S *m(char *x) { S *s = malloc(sizeof(S)); s->t = SYM; s->s = malloc(strlen(x)+1); strcpy(s->s, x); return s; }
+S *m(char *x) {
+    S *s = malloc(sizeof(S));
+    s->t = SYM;
+    size_t len = strlen(x);
+    s->s = malloc(len + 1);
+    memcpy(s->s, x, len);
+    s->s[len] = '\0';
+    return s;
+}
 S *l(int c) { S *s = malloc(sizeof(S)); s->t = LST; s->l = malloc(c*sizeof(S*)); s->len = c; return s; }
 S *t() { S *s = malloc(sizeof(S)); s->t = T_TRUE; return s; }
 S *f() { S *s = malloc(sizeof(S)); s->t = T_FALSE; return s; }
 S *nil() { return &nil_cell; }
+
+S *ffi_cell(char *lib, char *fn, ffi_fn func) {
+    S *s = malloc(sizeof(S));
+    s->t = FFI_FN;
+    s->s = malloc(strlen(lib) + strlen(fn) + 2);
+    snprintf(s->s, strlen(lib) + strlen(fn) + 2, "%s:%s", lib, fn);
+    s->n = (double)(intptr_t)func;
+    return s;
+}
 
 void env_set(char *k, S *v) {
     for (int i = 0; i < env_len; i++) if (!strcmp(env_keys[i], k)) { env_vals[i] = v; return; }
@@ -32,6 +68,60 @@ void env_set(char *k, S *v) {
 S *env_get(char *k) {
     for (int i = 0; i < env_len; i++) if (!strcmp(env_keys[i], k)) return env_vals[i];
     return nil();
+}
+
+// Load FFI function from library
+ffi_fn ffi_load(char *lib_name, char *fn_name) {
+    // Check cache first
+    for (int i = 0; i < ffi_cache_len; i++) {
+        if (!strcmp(ffi_cache[i].lib_name, lib_name) &&
+            !strcmp(ffi_cache[i].fn_name, fn_name)) {
+            return ffi_cache[i].fn;
+        }
+    }
+
+    if (ffi_cache_len >= MAX_FFI_CACHE) {
+        fprintf(stderr, "FFI cache full\n");
+        return NULL;
+    }
+
+    // Load library
+    void *handle = dlopen(lib_name, RTLD_LAZY);
+    if (!handle) {
+        fprintf(stderr, "Cannot load library %s: %s\n", lib_name, dlerror());
+        return NULL;
+    }
+
+    // Load function
+    ffi_fn fn = (ffi_fn)dlsym(handle, fn_name);
+    if (!fn) {
+        fprintf(stderr, "Cannot find function %s in %s: %s\n", fn_name, lib_name, dlerror());
+        dlclose(handle);
+        return NULL;
+    }
+
+    // Cache it
+    ffi_cache[ffi_cache_len].lib_name = malloc(strlen(lib_name) + 1);
+    ffi_cache[ffi_cache_len].fn_name = malloc(strlen(fn_name) + 1);
+    memcpy(ffi_cache[ffi_cache_len].lib_name, lib_name, strlen(lib_name));
+    ffi_cache[ffi_cache_len].lib_name[strlen(lib_name)] = '\0';
+    memcpy(ffi_cache[ffi_cache_len].fn_name, fn_name, strlen(fn_name));
+    ffi_cache[ffi_cache_len].fn_name[strlen(fn_name)] = '\0';
+    ffi_cache[ffi_cache_len].lib_handle = handle;
+    ffi_cache[ffi_cache_len].fn = fn;
+    ffi_cache_len++;
+
+    return fn;
+}
+
+// Convert S cell to native type for FFI call
+long s_to_long(S *s) {
+    if (!s) return 0;
+    if (s->t == NUM) return (long)s->n;
+    if (s->t == SYM) return (long)(intptr_t)s->s;
+    if (s->t == T_TRUE) return 1;
+    if (s->t == T_FALSE) return 0;
+    return 0;
 }
 
 S *read_atom(), *read_list();
@@ -77,9 +167,9 @@ S *eval(S *e) {
     if (e->t == SYM) return env_get(e->s);
     if (e->t != LST || !e->len) return nil();
 
-    S *fn = eval(e->l[0]);
-    if (fn->t == SYM) {
-        char *op = fn->s;
+    // Handle special forms that need unevaluated arguments
+    if (e->l[0]->t == SYM) {
+        char *op = e->l[0]->s;
         if (!strcmp(op, "define")) {
             S *v = eval(e->l[2]);
             env_set(e->l[1]->s, v);
@@ -95,6 +185,25 @@ S *eval(S *e) {
             res->l[1] = e->l[2];
             res->t = LST;
             return res;
+        }
+        if (!strcmp(op, "ffi")) {
+            // (ffi "libc" "write" 1 "hello")
+            if (e->len < 3) return nil();
+            char *lib_name = e->l[1]->s;
+            char *fn_name = e->l[2]->s;
+
+            ffi_fn fn = ffi_load(lib_name, fn_name);
+            if (!fn) return nil();
+
+            // Convert args
+            long args[6] = {0};
+            for (int i = 0; i < 6 && i+3 < e->len; i++) {
+                args[i] = s_to_long(eval(e->l[i+3]));
+            }
+
+            // Call with up to 6 arguments
+            long result = fn(args[0], args[1], args[2], args[3], args[4], args[5]);
+            return n((double)result);
         }
 
         double sum = 0, prod = 1;
@@ -155,6 +264,8 @@ S *eval(S *e) {
         }
     }
 
+    // Handle function application (when first element is not a symbol operator)
+    S *fn = eval(e->l[0]);
     if (fn->t == LST && fn->len == 2) {
         S *params = fn->l[0];
         S *body = fn->l[1];
@@ -173,6 +284,7 @@ void print(S *s) {
     else if (s->t == T_TRUE) printf("true");
     else if (s->t == T_FALSE) printf("false");
     else if (s->t == T_NIL) printf("nil");
+    else if (s->t == FFI_FN) printf("#<ffi:%s>", s->s);
     else if (s->t == LST) {
         printf("(");
         for (int i = 0; i < s->len; i++) { if (i) printf(" "); print(s->l[i]); }
@@ -181,6 +293,12 @@ void print(S *s) {
 }
 
 int main(int argc, char **argv) {
+    buf = malloc(buf_size);
+    if (!buf) {
+        fprintf(stderr, "Failed to allocate buffer\n");
+        return 1;
+    }
+
     env_set("+", m("+"));
     env_set("-", m("-"));
     env_set("*", m("*"));
@@ -194,12 +312,13 @@ int main(int argc, char **argv) {
     env_set("if", m("if"));
     env_set("define", m("define"));
     env_set("lambda", m("lambda"));
+    env_set("ffi", m("ffi"));
 
     if (argc > 1) {
         for (int i = 1; i < argc; i++) {
             FILE *f = fopen(argv[i], "r");
             if (!f) continue;
-            while (fgets(buf, sizeof(buf), f)) {
+            while (fgets(buf, buf_size, f)) {
                 if (buf[0] == ';') continue;
                 p = buf;
                 S *e = read_atom();
@@ -211,7 +330,7 @@ int main(int argc, char **argv) {
         }
     } else {
         if (isatty(0)) printf("nil-lisp\n");
-        while (fgets(buf, sizeof(buf), stdin)) {
+        while (fgets(buf, buf_size, stdin)) {
             p = buf;
             S *e = read_atom();
             S *res = eval(e);
@@ -219,5 +338,7 @@ int main(int argc, char **argv) {
             printf("\n");
         }
     }
+
+    free(buf);
     return 0;
 }

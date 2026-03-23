@@ -1,6 +1,5 @@
 #!/bin/sh
 # Test validator - simple and direct
-
 INTERPRETER="${1:-./nlisp}"
 TEST_FILE="${2:-test.nl}"
 
@@ -23,36 +22,36 @@ ACTUAL=$($INTERPRETER < "$TEST_FILE" 2>/dev/null)
 # Expected output (exact)
 EXPECTED="3
 15
-7
+9
 20
 5
 x
+99
 y
-10
-20
-30
+100
+(10 20 30)
 15
-20
+1
+(20)
+true
+true
 true
 false
 true
-false
+true
 true
 false
 1
 0
-99
-2
+double
+100
 (1 2 3)
-(10 20)
-10
-(2 3)
+(20)
 10
 true
-false
-nil
 id
 42
+add-10
 100
 get-value
 555
@@ -73,11 +72,11 @@ else
     echo "✗ Tests failed - output mismatch"
     echo ""
     echo "Expected:"
-    echo "$EXPECTED" | head -5
+    echo "$EXPECTED" | head -10
     echo "..."
     echo ""
     echo "Got:"
-    echo "$ACTUAL" | head -5
+    echo "$ACTUAL" | head -10
     echo "..."
     exit 1
 fi

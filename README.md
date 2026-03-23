@@ -1,7 +1,8 @@
 # nl
 ## TODO:
-* [ ] malloc files
-* [ ] create a small syscall implementation as an addon
+* [x] malloc files
+* [x] create a small syscall implementation as an addon
+* [ ] optimize further(?)
 n(il)-lisp: small lisp interpreter (C99).
 ### build:
 ```sh
