@@ -32,16 +32,6 @@ find_compiler() {
     return 1
 }
 
-detect_platform() {
-    if [ "$(uname)" = "Darwin" ]; then
-        echo "macos"
-    elif [ "$(uname)" = "Linux" ]; then
-        echo "linux"
-    else
-        echo "unknown"
-    fi
-}
-
 CC=$(find_compiler)
 if [ -z "$CC" ]; then
     echo "${RED}Error: No C compiler found${NC}" >&2
@@ -49,11 +39,8 @@ if [ -z "$CC" ]; then
     exit 1
 fi
 
-PLATFORM=$(detect_platform)
-
 echo "${BLUE}=== nil-lisp build ===${NC}"
 echo "${BLUE}Compiler:${NC} $CC"
-echo "${BLUE}Platform:${NC} $PLATFORM"
 echo "${BLUE}Source dir:${NC} $SRCDIR"
 echo "${BLUE}Output dir:${NC} $OUTDIR"
 echo "${BLUE}CFLAGS:${NC} $CFLAGS"
@@ -78,43 +65,27 @@ fi
 
 OUT="$OUTDIR/$PROG"
 
-# Determine linker flags based on platform
-LDFLAGS=""
-case "$PLATFORM" in
-    linux)
-        LDFLAGS="-ldl"
-        ;;
-    macos)
-        # macOS doesn't need -ldl, dlopen is in libc
-        LDFLAGS=""
-        ;;
-    *)
-        # Try to link with -ldl, fall back if it fails
-        LDFLAGS="-ldl"
-        ;;
-esac
-
 echo "${BLUE}Source:${NC} $SRC"
 echo "${BLUE}Output:${NC} $OUT"
-if [ -n "$LDFLAGS" ]; then
-    echo "${BLUE}LDFLAGS:${NC} $LDFLAGS"
-fi
 echo "${BLUE}Building...${NC}"
 
-if ! $CC $CFLAGS "$SRC" -o "$OUT" $LDFLAGS 2>/tmp/build.log; then
-    # If build failed with -ldl, try without it
-    if [ "$PLATFORM" != "macos" ] && grep -q "unable to find library" /tmp/build.log 2>/dev/null; then
-        echo "${YELLOW}Note: -ldl not found, trying without it...${NC}"
-        if ! $CC $CFLAGS "$SRC" -o "$OUT"; then
-            echo "${RED}✗ Build failed${NC}" >&2
-            cat /tmp/build.log >&2
-            exit 1
-        fi
-    else
+# Try to build without -ldl first (works on macOS and some Linux systems)
+if $CC $CFLAGS "$SRC" -o "$OUT" 2>/tmp/build1.log; then
+    # Success without -ldl
+    :
+elif grep -q "undefined reference.*dlopen\|undefined reference.*dlsym" /tmp/build1.log 2>/dev/null; then
+    # Need to link libdl - try adding it
+    echo "${YELLOW}Adding -ldl...${NC}"
+    if ! $CC $CFLAGS "$SRC" -o "$OUT" -ldl 2>/tmp/build2.log; then
         echo "${RED}✗ Build failed${NC}" >&2
-        cat /tmp/build.log >&2
+        cat /tmp/build2.log >&2
         exit 1
     fi
+else
+    # Some other error
+    echo "${RED}✗ Build failed${NC}" >&2
+    cat /tmp/build1.log >&2
+    exit 1
 fi
 
 echo "${GREEN}✓ Build successful${NC}"
@@ -123,7 +94,6 @@ echo ""
 # Show sizes
 if [ -f "$OUT" ]; then
     if command -v stat >/dev/null 2>&1; then
-        # Try BSD stat first, then GNU stat
         if stat -f%z "$OUT" >/dev/null 2>&1; then
             SIZE=$(stat -f%z "$OUT")
         else

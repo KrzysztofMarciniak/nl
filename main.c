@@ -85,8 +85,18 @@ ffi_fn ffi_load(char *lib_name, char *fn_name) {
         return NULL;
     }
 
-    // Load library
-    void *handle = dlopen(lib_name, RTLD_LAZY);
+    // Load library - dlopen(NULL) works for libc on Unix systems
+    void *handle;
+
+    if (!strcmp(lib_name, "libc") || !strcmp(lib_name, "c")) {
+        // Use dlopen(NULL) to access already-loaded libc
+        // Works on: Linux, macOS, OpenBSD, and most Unix systems
+        handle = dlopen(NULL, RTLD_LAZY);
+    } else {
+        // Load custom library
+        handle = dlopen(lib_name, RTLD_LAZY);
+    }
+
     if (!handle) {
         fprintf(stderr, "Cannot load library %s: %s\n", lib_name, dlerror());
         return NULL;
@@ -96,7 +106,7 @@ ffi_fn ffi_load(char *lib_name, char *fn_name) {
     ffi_fn fn = (ffi_fn)dlsym(handle, fn_name);
     if (!fn) {
         fprintf(stderr, "Cannot find function %s in %s: %s\n", fn_name, lib_name, dlerror());
-        dlclose(handle);
+        // Note: we don't dlclose here because for libc we need to keep it open
         return NULL;
     }
 
@@ -131,6 +141,32 @@ S *read_atom() {
     if (!*p) return nil();
     if (*p == '(') return read_list();
 
+    // Handle string literals (quoted with ")
+    if (*p == '"') {
+        p++;  // skip opening quote
+        char w[256], *wp = w;
+        // Read until closing quote
+        while (*p && *p != '"') {
+            if (*p == '\\' && *(p+1)) {
+                // Handle escape sequences
+                p++;
+                if (*p == 'n') *wp++ = '\n';
+                else if (*p == 't') *wp++ = '\t';
+                else if (*p == 'r') *wp++ = '\r';
+                else if (*p == '"') *wp++ = '"';
+                else if (*p == '\\') *wp++ = '\\';
+                else *wp++ = *p;
+                p++;
+            } else {
+                *wp++ = *p++;
+            }
+        }
+        if (*p == '"') p++;  // skip closing quote
+        *wp = 0;
+        return m(w);
+    }
+
+    // Handle regular symbols/numbers
     char w[256], *wp = w;
     while (*p && !isspace(*p) && *p != ')') *wp++ = *p++;
     *wp = 0;
@@ -189,16 +225,45 @@ S *eval(S *e) {
         if (!strcmp(op, "ffi")) {
             // (ffi "libc" "write" 1 "hello")
             if (e->len < 3) return nil();
-            char *lib_name = e->l[1]->s;
-            char *fn_name = e->l[2]->s;
+
+            // Get library and function names - they should be literal symbols (quoted strings)
+            S *lib_cell = e->l[1];
+            S *fn_cell = e->l[2];
+
+            // Check if they're symbols (unevaluated string literals)
+            if (lib_cell->t != SYM || fn_cell->t != SYM) {
+                fprintf(stderr, "FFI: library and function names must be string literals\n");
+                return nil();
+            }
+
+            char *lib_name = lib_cell->s;
+            char *fn_name = fn_cell->s;
 
             ffi_fn fn = ffi_load(lib_name, fn_name);
             if (!fn) return nil();
 
-            // Convert args
+            // Convert args - evaluate numbers but not string literals
             long args[6] = {0};
             for (int i = 0; i < 6 && i+3 < e->len; i++) {
-                args[i] = s_to_long(eval(e->l[i+3]));
+                S *arg = e->l[i+3];
+                // If it's a symbol, it might be a string literal - don't evaluate
+                // If it's a number or expression, evaluate it
+                if (arg->t == NUM) {
+                    args[i] = (long)arg->n;
+                } else if (arg->t == SYM) {
+                    // Could be a string literal or a variable - try variable first
+                    S *val = env_get(arg->s);
+                    if (val->t == T_NIL) {
+                        // Not found in environment, treat as string literal
+                        args[i] = (long)(intptr_t)arg->s;
+                    } else {
+                        // Found in environment, use that value
+                        args[i] = s_to_long(val);
+                    }
+                } else {
+                    // For other types, evaluate normally
+                    args[i] = s_to_long(eval(arg));
+                }
             }
 
             // Call with up to 6 arguments
