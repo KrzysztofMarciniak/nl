@@ -29,6 +29,11 @@ chmod +x ./make.sh;
 chmod +x ./build_with_any_library.sh;
 ./build_with_any_library.sh m X11
 ```
+2.0 - install
+```sh
+chmod +x ./install.sh;
+./install.sh
+```
 ### 2. Example
 
 Example files are:
