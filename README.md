@@ -1,5 +1,4 @@
 # nil-lisp: A Tiny Lisp Interpreter in C99
-![Uploading nil.png…]()
 
 ## Features
 
