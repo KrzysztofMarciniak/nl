@@ -1,4 +1,5 @@
 # nil-lisp: A Tiny Lisp Interpreter in C99
+![Uploading nil.png…]()
 
 ## Features
 
@@ -16,20 +17,20 @@
 
 You have two options:
 
-1.1 - default, only libc.
+1.1 default, only libc.
 
 ``` sh
 chmod +x ./make.sh;
 ./make.sh
 ```
 
-1.2 - compile with any library, for example math (m) and x11 (X11)
+1.2 compile with any library, for example math (m) and x11 (X11)
 
 ``` sh
 chmod +x ./build_with_any_library.sh;
 ./build_with_any_library.sh m X11
 ```
-2.0 - install
+### 2. install
 ```sh
 chmod +x ./install.sh;
 ./install.sh
