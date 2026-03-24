@@ -146,7 +146,7 @@ static ffi_fn ffi_load(char* lib_name, char* fn_name) {
 
         void* handle = NULL;
         if (!strcmp(lib_name, "libc") || !strcmp(lib_name, "c")) {
-                handle = RTLD_DEFAULT;
+                handle = dlopen(NULL, RTLD_LAZY);
         } else {
                 handle = dlopen(lib_name, RTLD_LAZY | RTLD_GLOBAL);
         }
@@ -654,6 +654,12 @@ int main(int argc, char** argv) {
         env_set("ffi", sym("ffi"));
         env_set("strlen", sym("strlen"));
         env_set("concat", sym("concat"));
+
+        S* argv_list = list_cell(argc);
+        for (int i = 0; i < argc; i++) {
+                argv_list->l[i] = str_cell(argv[i]);
+        }
+        env_set("argv", argv_list);
 
         if (argc > 1) {
                 for (int i = 1; i < argc; i++) {

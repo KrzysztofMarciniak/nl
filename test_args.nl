@@ -1,0 +1,11 @@
+(define write
+  (lambda (str)
+    (ffi "libc" "write" 1 str (ffi "libc" "strlen" str))
+    nil))
+(write "argv: \n")
+(write (car argv))
+(write "\n")
+(write (car (cdr argv)))
+(write "\n")
+(write (car (cdr (cdr argv))))
+(write "\n")
