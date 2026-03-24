@@ -34,7 +34,7 @@ chmod +x ./build_with_any_library.sh;
 chmod +x ./install.sh;
 ./install.sh
 ```
-### 2. Example
+### 3. Example
 
 Example files are:
 
