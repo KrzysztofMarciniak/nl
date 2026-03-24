@@ -283,37 +283,52 @@ static void print_escaped_str(const char* s) {
         putchar('"');
 }
 
-static void print(S* s, bool in_repl_mode) {
-        if (!s) return;
+static void print(S* s) {
+        if (!s) {
+                printf("nil");
+                return;
+        }
+
         switch (s->t) {
                 case NUM:
                         printf("%g", s->n);
                         break;
+
                 case SYM:
-                        if (in_repl_mode) printf("%s", s->s ? s->s : "");
+                        printf("%s", s->s ? s->s : "");
                         break;
+
                 case T_STR:
                         print_escaped_str(s->s ? s->s : "");
                         break;
+
                 case T_TRUE:
                         printf("true");
                         break;
+
                 case T_FALSE:
                         printf("false");
                         break;
+
                 case T_NIL:
                         printf("nil");
                         break;
+
                 case FFI_FN:
                         printf("#<ffi:%s>", s->s ? s->s : "");
                         break;
+
                 case LST:
                         putchar('(');
                         for (int i = 0; i < s->len; i++) {
-                                if (i) putchar(' ');
-                                print(s->l[i], in_repl_mode);
+                                if (i > 0) putchar(' ');
+                                print(s->l[i]);
                         }
                         putchar(')');
+                        break;
+
+                default:
+                        printf("#<unknown>");
                         break;
         }
 }
@@ -678,9 +693,8 @@ int main(int argc, char** argv) {
                                 }
                                 if (!*p) break;
 
-                                S* e   = read_atom();
-                                S* res = eval(e);
-                                print(res, false);
+                                S* e = read_atom();
+                                eval(e);
                         }
 
                         free(buf);
@@ -699,7 +713,7 @@ int main(int argc, char** argv) {
                         p      = buf;
                         S* e   = read_atom();
                         S* res = eval(e);
-                        print(res, true);
+                        print(res);
                         putchar('\n');
                 }
 
